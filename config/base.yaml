@@ -1,0 +1,64 @@
+seed: 1031
+log_path: ./log/
+config_path: ./config/
+weight_path: ./weights/
+pred_path: ./preds/
+header: fold epoch train_loss train_acc val_loss val_acc
+
+root: ./dataset/seti/
+
+train:
+  num_labels: 1
+  n_splits: 5
+  epoch: 16
+  accumulate: 4
+
+transform:
+  name: seti_transform0
+  size: 512,256
+
+strong_transform:
+  name: mixup
+  params:
+    alpha: 1.0
+#    beta: 0.6
+
+train_loader:
+  batch_size: 60
+  shuffle: True
+  num_workers: 8
+  pin_memory: False
+  drop_last: True
+
+val_loader:
+  batch_size: 60
+  shuffle: False
+  num_workers: 8
+  pin_memory: False
+  drop_last: False
+
+model: tf_efficientnetv2_b0
+
+optimizer:
+  name: Adam
+  lr: 0.0005
+  
+scheduler:
+  name: CosineAnnealingWarmRestarts
+  eta_min: 0.00001
+  cycle: 2
+
+loss: nn.BCEWithLogitsLoss
+
+val:
+  name: "stratified_kfold"
+  params:
+    target: "target"
+    n_splits: 5
+    random_state: 1031
+
+sampling:
+  name: "random_over_sample"
+#  name: "none"
+  params:
+    random_state: 1031
