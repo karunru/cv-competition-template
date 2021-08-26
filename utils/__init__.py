@@ -3,6 +3,7 @@ from .exp import find_exp_num, remove_abnormal_exp
 from .file_io import save_model
 from .logger import get_logger
 from .reduce_mem_usage import reduce_mem_usage
+from .replace_activation import Mish, TanhExp, replace_activations
 from .seed_everything import seed_everything
 from .slack import slack_notify
 from .timer import timer

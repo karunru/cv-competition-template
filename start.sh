@@ -15,6 +15,8 @@ touch config/.gitkeep
 # template
 cp -r ../cv-competition-template/augmentations ./
 cp -r ../cv-competition-template/losses ./
+cp -r ../cv-competition-template/models ./
+cp -r ../cv-competition-template/optimizer ./
 cp -r ../cv-competition-template/sampling ./
 cp -r ../cv-competition-template/utils ./
 cp -r ../cv-competition-template/validation ./

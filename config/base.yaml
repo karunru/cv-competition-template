@@ -37,7 +37,13 @@ val_loader:
   pin_memory: False
   drop_last: False
 
-model: tf_efficientnetv2_b0
+model: ResNet_18RS
+
+dino_pretrained_path: "../dino/output/resnetrs/checkpoint.pth"
+
+TTA: True
+
+use_SAM: False
 
 optimizer:
   name: Adam

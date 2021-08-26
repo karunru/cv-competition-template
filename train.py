@@ -1,4 +1,5 @@
 import atexit
+import getpass
 import os
 import warnings
 from pathlib import Path
@@ -9,16 +10,20 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import torchvision
+import ttach as tta
 from adabelief_pytorch import AdaBelief
 from augmentations.augmentation import seti_transform0
 from augmentations.strong_aug import *
 from cuml.metrics import log_loss  # , roc_auc_score
 from dataset import SetiDataset
-from fastprogress import master_bar, progress_bar
+from fastprogress.fastprogress import force_console_behavior
 from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
 from losses import FocalLoss, RocAucLoss, ROCStarLoss
 from madgrad import MADGRAD
+from models.resnetrs import ResNet_18RS, resnetrs_init_weights
 from omegaconf import OmegaConf
+from optimizer.sam import SAM
 from pandarallel import pandarallel
 from sampling import get_sampling
 from sklearn.metrics import roc_auc_score
@@ -34,10 +39,13 @@ from torch.optim.lr_scheduler import (
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from utils import (
+    Mish,
+    TanhExp,
     find_exp_num,
     get_logger,
     parse_args,
     remove_abnormal_exp,
+    replace_activations,
     save_model,
     seed_everything,
 )
@@ -46,6 +54,7 @@ from validation import get_validation
 pandarallel.initialize(progress_bar=True)
 warnings.filterwarnings("ignore")
 tqdm.pandas()
+master_bar, progress_bar = force_console_behavior()
 
 
 def main():
@@ -92,11 +101,8 @@ def main():
     splits = get_validation(train_df, config)
 
     scores = np.zeros(len(splits))
-    oof_preds = []
-    oof_idxes = []
     for fold, (train_idx, val_idx) in enumerate(splits):
 
-        oof_idxes.append(val_idx)
         X_train, X_val = X[train_idx], X[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
         X_train, y_train = get_sampling(X_train.reshape(-1, 1), y_train, config)
@@ -106,7 +112,31 @@ def main():
         train_loader = DataLoader(train_data, **config.train_loader)
         val_loader = DataLoader(val_data, **config.val_loader)
 
-        model = eval(config.model)(pretrained=True, in_chans=1)
+        model = eval(config.model)(pretrained=False)
+        if config.model == "ResNet_18RS":
+            if config.dino_pretrained_path is not None:
+                print(f"load {config.dino_pretrained_path}")
+                state_dict = torch.load(
+                    config.dino_pretrained_path, map_location="cpu"
+                )["teacher"]
+                state_dict = {
+                    k.replace("module.", ""): v for k, v in state_dict.items()
+                }
+                state_dict = {
+                    k.replace("backbone.", ""): v for k, v in state_dict.items()
+                }
+                model.load_state_dict(state_dict, strict=False)
+            else:
+                resnetrs_init_weights(model)
+        elif config.model == "resnet18":
+            model = torchvision.models.resnet18(pretrained=False)
+            state_dict = torch.load(config.dino_pretrained_path, map_location="cpu")[
+                "teacher"
+            ]
+            state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+            state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
+            model.load_state_dict(state_dict, strict=False)
+
         if "fc.weight" in model.state_dict().keys():
             model.fc = nn.Linear(model.fc.in_features, config.train.num_labels)
         elif "classifier.weight" in model.state_dict().keys():
@@ -117,25 +147,47 @@ def main():
             model.head.fc = nn.Linear(
                 model.head.fc.in_features, config.train.num_labels
             )
+        elif "head.weight" in model.state_dict().keys():
+            model.head = nn.Linear(model.head.in_features, config.train.num_labels)
+
         model = model.cuda()
-        optimizer = eval(config.optimizer.name)(
-            model.parameters(), lr=config.optimizer.lr
-        )
-        scheduler = eval(config.scheduler.name)(
-            optimizer,
-            max(1, config.train.epoch // config.scheduler.cycle),
-            eta_min=config.scheduler.eta_min,
-        )
+
+        if config.use_SAM:
+            optimizer = eval(config.optimizer.name)
+            optimizer = SAM(
+                model.parameters(),
+                base_optimizer=optimizer,
+                rho=0.15,
+                adaptive=True,
+                lr=config.optimizer.lr,
+            )
+            scheduler = eval(config.scheduler.name)(
+                optimizer.base_optimizer,
+                max(1, config.train.epoch // config.scheduler.cycle),
+                eta_min=config.scheduler.eta_min,
+            )
+        else:
+            optimizer = eval(config.optimizer.name)(
+                model.parameters(), lr=config.optimizer.lr
+            )
+            scheduler = eval(config.scheduler.name)(
+                optimizer,
+                max(1, config.train.epoch // config.scheduler.cycle),
+                eta_min=config.scheduler.eta_min,
+            )
+
         criterion = eval(config.loss)()
         scaler = GradScaler()
 
         best_acc = 0
         best_loss = 1e10
-        best_oof_pred = np.empty(len(val_idx))
         mb = master_bar(range(config.train.epoch))
         for epoch in mb:
             timer.add("train")
-            train_loss, train_acc = train(
+            # if (config.model.simsiam_pretrained_path is not None) and epoch == 5:
+            #     model.requires_grad_(True)
+
+            train_loss, train_rmse = train(
                 config,
                 model,
                 transform["torch_train"],
@@ -180,20 +232,16 @@ def main():
             if val_acc > best_acc:
                 best_acc = val_acc
                 scores[fold] = best_acc
-                best_oof_pred = oof_pred
+                train_df.loc[val_idx, "oof_pred"] = oof_pred
                 save_name = Path(config.weight_path) / f"best_acc_fold{fold}.pth"
                 save_model(save_name, epoch, val_loss, val_acc, model, optimizer)
 
-            oof_preds.append(best_oof_pred)
             save_name = Path(config.weight_path) / f"last_epoch_fold{fold}.pth"
             save_model(save_name, epoch, val_loss, val_acc, model, optimizer)
 
         del model
         torch.cuda.empty_cache()
 
-    oof_idxes = np.concatenate(oof_idxes)
-    order = np.argsort(oof_idxes)
-    train_df["oof_pred"] = np.concatenate(oof_preds)[order]
     train_df[["id", "target", "oof_pred"]].to_csv(
         Path(config.pred_path) / "oof_pred.csv", index=False
     )
@@ -228,27 +276,77 @@ def train(
         labels = labels.cuda()
         images = transform(images)
 
-        if epoch < config.train.epoch - 5:
-            with autocast():
-                images, labels_a, labels_b, lam = strong_transform(
-                    images, labels, **config.strong_transform.params
-                )
-                logits = model(images)
-                loss = criterion(logits, labels_a) * lam + criterion(
-                    logits, labels_b
-                ) * (1 - lam)
-                loss /= config.train.accumulate
-        else:
-            with autocast():
-                logits = model(images)
-                loss = criterion(logits, labels)
-                loss /= config.train.accumulate
+        if config.use_SAM:
 
-        scaler.scale(loss).backward()
-        if (it + 1) % config.train.accumulate == 0:
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad()
+            #  first step
+            if epoch < config.train.epoch - 5:
+                with autocast():
+                    images, labels_a, labels_b, lam = strong_transform(
+                        images, labels, **config.strong_transform.params
+                    )
+                    logits = model(images)
+                    loss = criterion(logits, labels_a) * lam + criterion(
+                        logits, labels_b
+                    ) * (1 - lam)
+                    loss /= config.train.accumulate
+
+                    loss = (loss - config.flooding.b).abs() + config.flooding.b
+            else:
+                with autocast():
+                    logits = model(images)
+                    loss = criterion(logits, labels)
+                    loss /= config.train.accumulate
+
+            loss.backward()
+            if (it + 1) % config.train.accumulate == 0:
+                optimizer.first_step(zero_grad=True)
+
+            # second step
+            if epoch < config.train.epoch - 5:
+                with autocast():
+                    images, labels_a, labels_b, lam = strong_transform(
+                        images, labels, **config.strong_transform.params
+                    )
+                    logits = model(images)
+                    loss = criterion(logits, labels_a) * lam + criterion(
+                        logits, labels_b
+                    ) * (1 - lam)
+                    loss /= config.train.accumulate
+
+                    loss = (loss - config.flooding.b).abs() + config.flooding.b
+            else:
+                with autocast():
+                    logits = model(images)
+                    loss = criterion(logits, labels)
+                    loss /= config.train.accumulate
+
+            loss.backward()
+            if (it + 1) % config.train.accumulate == 0:
+                optimizer.second_step(zero_grad=True)
+        else:
+            if epoch < config.train.epoch - 5:
+                with autocast():
+                    images, labels_a, labels_b, lam = strong_transform(
+                        images, labels, **config.strong_transform.params
+                    )
+                    logits = model(images)
+                    loss = criterion(logits, labels_a) * lam + criterion(
+                        logits, labels_b
+                    ) * (1 - lam)
+                    loss /= config.train.accumulate
+
+                    loss = (loss - config.flooding.b).abs() + config.flooding.b
+            else:
+                with autocast():
+                    logits = model(images)
+                    loss = criterion(logits, labels)
+                    loss /= config.train.accumulate
+
+            scaler.scale(loss).backward()
+            if (it + 1) % config.train.accumulate == 0:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
 
         logits = logits.sigmoid().detach().cpu().numpy().astype(float)
         labels = labels.detach().cpu().numpy().astype(int)
@@ -282,6 +380,10 @@ def validate(config, model, transform, loader, criterion, mb, device):
     gt = []
     losses = []
 
+    if config.TTA:
+        model = tta.ClassificationTTAWrapper(
+            model=model, transforms=tta.aliases.flip_transform(), merge_mode="mean"
+        )
     model.eval()
     for it, (images, labels) in enumerate(progress_bar(loader, parent=mb)):
         images = images.cuda()
