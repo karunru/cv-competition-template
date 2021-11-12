@@ -8,6 +8,7 @@ import mlcrate as mlc
 import neptune.new as neptune
 import numpy as np
 import pandas as pd
+import timm
 import torch
 import torch.nn as nn
 import torchvision
@@ -60,7 +61,7 @@ master_bar, progress_bar = force_console_behavior()
 def main():
     run = neptune.init(
         project="karunru/seti",
-        api_token=os.environ["NEPTUNE_SETI_API_TOKEN"],
+        api_token=os.environ["NEPTUNE_API_TOKEN"],
     )
 
     args = parse_args()
@@ -102,6 +103,8 @@ def main():
 
     scores = np.zeros(len(splits))
     for fold, (train_idx, val_idx) in enumerate(splits):
+        if not fold in config["model"]["train_folds"]:
+            continue
 
         X_train, X_val = X[train_idx], X[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
@@ -112,43 +115,9 @@ def main():
         train_loader = DataLoader(train_data, **config.train_loader)
         val_loader = DataLoader(val_data, **config.val_loader)
 
-        model = eval(config.model)(pretrained=False)
-        if config.model == "ResNet_18RS":
-            if config.dino_pretrained_path is not None:
-                print(f"load {config.dino_pretrained_path}")
-                state_dict = torch.load(
-                    config.dino_pretrained_path, map_location="cpu"
-                )["teacher"]
-                state_dict = {
-                    k.replace("module.", ""): v for k, v in state_dict.items()
-                }
-                state_dict = {
-                    k.replace("backbone.", ""): v for k, v in state_dict.items()
-                }
-                model.load_state_dict(state_dict, strict=False)
-            else:
-                resnetrs_init_weights(model)
-        elif config.model == "resnet18":
-            model = torchvision.models.resnet18(pretrained=False)
-            state_dict = torch.load(config.dino_pretrained_path, map_location="cpu")[
-                "teacher"
-            ]
-            state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
-            state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
-            model.load_state_dict(state_dict, strict=False)
-
-        if "fc.weight" in model.state_dict().keys():
-            model.fc = nn.Linear(model.fc.in_features, config.train.num_labels)
-        elif "classifier.weight" in model.state_dict().keys():
-            model.classifier = nn.Linear(
-                model.classifier.in_features, config.train.num_labels
-            )
-        elif "head.fc.weight" in model.state_dict().keys():
-            model.head.fc = nn.Linear(
-                model.head.fc.in_features, config.train.num_labels
-            )
-        elif "head.weight" in model.state_dict().keys():
-            model.head = nn.Linear(model.head.in_features, config.train.num_labels)
+        # model = eval(config.model)(pretrained=False)
+        model = timm.create_model(config.model, pretrained=True, num_classes=0)
+        model.fc = nn.LazyLinear(config.train.num_labels)
 
         model = model.cuda()
 
@@ -184,8 +153,6 @@ def main():
         mb = master_bar(range(config.train.epoch))
         for epoch in mb:
             timer.add("train")
-            # if (config.model.simsiam_pretrained_path is not None) and epoch == 5:
-            #     model.requires_grad_(True)
 
             train_loss, train_rmse = train(
                 config,
@@ -207,12 +174,9 @@ def main():
             )
             val_time = timer.fsince("val")
 
-            output1 = "epoch: {} train_time: {} validate_time: {}".format(
-                epoch, train_time, val_time
-            )
-            output2 = "train_loss: {:.3f} train_auc: {:.3f} val_loss: {:.3f} val_auc: {:.3f}".format(
-                train_loss, train_acc, val_loss, val_acc
-            )
+            output1 = f"fold: {fold} epoch: {epoch} train_time: {train_time} validate_time: {val_time}"
+            output2 = f"train_loss: {train_loss:.3f} train_mae: {train_mae:.3f} val_loss: {val_loss:.3f} val_mae: {val_mae:.3f}"
+
             logger.info(output1)
             logger.info(output2)
             mb.write(output1)

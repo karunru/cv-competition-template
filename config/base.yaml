@@ -18,10 +18,10 @@ transform:
   size: 512,256
 
 strong_transform:
-  name: mixup
+  name: resizemix
   params:
-    alpha: 1.0
-#    beta: 0.6
+    alpha: 0.1
+    beta: 0.5
 
 train_loader:
   batch_size: 60
@@ -37,16 +37,29 @@ val_loader:
   pin_memory: False
   drop_last: False
 
-model: ResNet_18RS
+model: resnetv2_50
 
-dino_pretrained_path: "../dino/output/resnetrs/checkpoint.pth"
+train_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+
+convert_groupnorm: False
+
+weight_standization: False
+
+replace_activations:
+  before: None
+  after: TanhExp
 
 TTA: True
 
 use_SAM: False
 
 optimizer:
-  name: Adam
+  name: optim.RAdam
   lr: 0.0005
   
 scheduler:
@@ -54,7 +67,14 @@ scheduler:
   eta_min: 0.00001
   cycle: 2
 
-loss: nn.BCEWithLogitsLoss
+loss:
+  name: SoftBCEWithLogitsLoss
+  smooth_factor: 0.02
+
+use_pos_weight: False
+
+flooding:
+  b: 0.0
 
 val:
   name: "stratified_kfold"
