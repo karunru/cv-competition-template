@@ -5,14 +5,14 @@ from pathlib import Path
 import pandas as pd
 
 
-def find_exp_num(log_path: str) -> int:
+def find_exp_num(config_path: str) -> int:
 
-    log_files = glob(str(Path(log_path) / "*.csv"))
-    if not len(log_files):
+    config_files = glob(str(Path(config_path) / "exp_*.yaml"))
+    if not len(config_files):
         return 1
     else:
         exp_nums = [
-            os.path.splitext(i)[0].split("/")[-1].split("_")[-1] for i in log_files
+            os.path.splitext(i)[0].split("/")[-1].split("_")[-1] for i in config_files
         ]
         exp_nums = list(map(int, exp_nums))
         return max(exp_nums) + 1

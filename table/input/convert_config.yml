@@ -1,0 +1,8 @@
+target:
+  - "train"
+  - "test"
+
+input_extension: "csv"
+
+input_dir: "input/"
+output_dir: "input/"

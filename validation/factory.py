@@ -1,9 +1,10 @@
 import datetime
+import os
 import random
 from collections import Counter, defaultdict
 from typing import List, Tuple, Union
 
-import cudf
+# import cudf
 import numpy as np
 import pandas as pd
 from omegaconf import DictConfig, ListConfig
@@ -152,9 +153,10 @@ def stratified_kfold(
     )
 
     y = (
-        df[params["target"]].to_array()
-        if isinstance(df, cudf.DataFrame)
-        else np.array(df[params["target"]])
+        # df[params["target"]].to_array()
+        # if isinstance(df, cudf.DataFrame)
+        # else
+        np.array(df[params["target"]])
     )
     X_col = [col for col in df.columns.to_list() if col is not params["target"]]
     split = []
@@ -228,15 +230,63 @@ def _stratified_group_k_fold(X, y, groups, k, seed=42):
 def get_validation(
     df: pd.DataFrame, config: Union[DictConfig, ListConfig]
 ) -> List[Tuple[np.ndarray, np.ndarray]]:
-    name: str = config["val"]["name"]
+    fold_file_path = (
+        config["root"]
+        + "/"
+        + config["val"]["name"]
+        + "_n_splits_"
+        + str(config["val"]["params"]["n_splits"])
+        + "_target_"
+        + str(config["val"]["params"]["target"])
+        + "_random_state_"
+        + str(config["val"]["params"]["random_state"])
+        + ".csv"
+    )
+    _df = df.copy()
+    if _df[config["val"]["params"]["id"]].str.contains("jpg")[0]:
+        _df[config["val"]["params"]["id"]] = (
+            _df[config["val"]["params"]["id"]]
+            .str.replace("^.*/", "")
+            .str.replace(".jpg", "")
+        )
 
-    func = globals().get(name)
-    if func is None:
-        raise NotImplementedError
+    if os.path.exists(fold_file_path) and not config["val"]["params"]["force_recreate"]:
+        print(f"load {fold_file_path}")
 
-    if "group" in name:
-        groups_col = config["val"]["params"]["group"]
-        groups = df[groups_col]
-        return func(df, groups, config)
+        fold_df = pd.read_csv(fold_file_path)
+
+        split = []
+        for fold in range(config["val"]["params"]["n_splits"]):
+            trn_ids = fold_df.loc[
+                fold_df["fold"] != fold, config["val"]["params"]["id"]
+            ]
+            trn_idx = _df[_df[config["val"]["params"]["id"]].isin(trn_ids)].index.values
+            val_ids = fold_df.loc[
+                fold_df["fold"] == fold, config["val"]["params"]["id"]
+            ]
+            val_idx = _df[_df[config["val"]["params"]["id"]].isin(val_ids)].index.values
+            split.append((np.asarray(trn_idx), np.asarray(val_idx)))
+
     else:
-        return func(df, config)
+        print(f"make {fold_file_path}")
+
+        name: str = config["val"]["name"]
+
+        func = globals().get(name)
+        if func is None:
+            raise NotImplementedError
+
+        if "group" in name:
+            groups_col = config["val"]["params"]["group"]
+            groups = _df[groups_col]
+            split = func(_df, groups, config)
+        else:
+            split = func(_df, config)
+
+        _df["fold"] = -1
+        for fold, (train_idx, val_idx) in enumerate(split):
+            _df.loc[val_idx, "fold"] = fold
+
+        _df[[config["val"]["params"]["id"], "fold"]].to_csv(fold_file_path, index=False)
+
+    return split

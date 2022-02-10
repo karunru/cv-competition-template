@@ -10,7 +10,7 @@ import cudf
 import numpy as np
 import pandas as pd
 from scipy.stats import ks_2samp
-from src.utils import load_pickle, logger, save_pickle
+from table.src.utils import load_pickle, logger, save_pickle
 from tqdm import tqdm
 from xfeat import (
     ConstantFeatureEliminator,

@@ -50,3 +50,7 @@ def resizemix(x, y, alpha=0.1, beta=0.8):
     x1, y1, x2, y2 = rand_region(x.size(), resized_x.size())
     x[:, :, y1:y2, x1:x2] = resized_x
     return x, target_a, target_b, lam
+
+
+def get_strong_transforms(cfg):
+    return eval(cfg.strong_transform.name)

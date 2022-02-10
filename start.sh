@@ -20,11 +20,11 @@ cp -r ../cv-competition-template/optimizer ./
 cp -r ../cv-competition-template/sampling ./
 cp -r ../cv-competition-template/utils ./
 cp -r ../cv-competition-template/validation ./
-cp ../cv-competition-template/config/base.yaml config/
-cp ../cv-competition-template/dataset.py ./
-cp ../cv-competition-template/inference.py ./
+cp -r ../cv-competition-template/table ./
+cp -r ../cv-competition-template/config ./
+cp -r ../cv-competition-template/*.py ./
+cp -r ../cv-competition-template/*.sh ./
 cp ../cv-competition-template/pyproject.toml ./
-cp ../cv-competition-template/train.py ./
 cp ../cv-competition-template/.gitignore ./
 
 # idea settings

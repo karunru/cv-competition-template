@@ -64,8 +64,8 @@ optimizer:
   
 scheduler:
   name: CosineAnnealingWarmRestarts
+  T_0: 20
   eta_min: 0.00001
-  cycle: 2
 
 loss:
   name: SoftBCEWithLogitsLoss
@@ -77,9 +77,10 @@ flooding:
   b: 0.0
 
 val:
-  name: "stratified_kfold"
+  name: stratified_kfold
   params:
-    target: "target"
+    id: Id
+    target: bins
     n_splits: 5
     random_state: 1031
 

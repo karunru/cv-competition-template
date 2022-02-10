@@ -1,0 +1,96 @@
+seed_everything: &seed 1031
+
+root: ./dataset/
+dataset: yolox_x_crop
+
+pre_process:
+  xentropy: True
+  tweedie: False
+
+features:
+  age: exp_087
+  adoption_speed: exp_097
+  gender: exp_076
+  breed: exp_088
+  maturity_size: exp_110
+  bin_paw: null
+  paw_embed: exp_116
+
+categorical_cols:
+  - gender
+  - breed
+  - Age_bin
+  - Age_year
+  - MaturitySize_bin
+#  - bin_paw_oof_pred_bin
+  - num_dog
+  - num_cat
+  - num_teddy_bear
+  - num_person
+  - num_dog_cat
+  - num_dog_cat_teddy_bear
+
+groupby_keys:
+  - MaturitySize_bin
+  - Age_bin
+  - breed
+  - gender
+
+
+target: Pawpularity
+
+target_encoding: True
+
+feature_selection:
+  SpearmanCorrelation:
+    threshold: 0.95
+    dryrun: False
+    not_remove_cols:
+      - Id
+      - Age_year
+  top_k:
+    do: False
+    importance: ""
+    top_k: 0.1
+
+model:
+  name: "xgb"
+  mode: "regression"
+
+  model_params:
+    objective: "binary:logistic"
+    booster: "gbtree"
+    eval_metric: "logloss"
+    tree_method: "gpu_hist"
+    max_depth: 3
+    max_leaves: 256
+    learning_rate: 0.01
+    n_estimators: 10000
+    min_child_weight: 110
+    colsample_bytree: 0.45
+    reg_alpha: 0.00001
+    reg_lambda: 0.001
+    verbosity: 0
+    seed: *seed
+    random_state: *seed
+
+  train_params:
+    early_stopping_rounds: 200
+    verbose: True
+
+val:
+  name: stratified_kfold
+  params:
+    id: Id
+    target: Pawpularity
+    n_splits: 10
+    random_state: *seed
+    force_recreate: False
+
+sampling:
+#  name: random_over_sample
+  name: "none"
+  params:
+    random_state: *seed
+
+output_dir: "output"

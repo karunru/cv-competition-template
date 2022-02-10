@@ -12,7 +12,14 @@ class SAM(torch.optim.Optimizer):
         self.param_groups = self.base_optimizer.param_groups
 
     @torch.no_grad()
-    def first_step(self, zero_grad=False):
+    def first_step(self, closure=None, zero_grad=False):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                try:
+                    loss = closure()
+                except:
+                    pass
         grad_norm = self._grad_norm()
         for group in self.param_groups:
             scale = group["rho"] / (grad_norm + 1e-12)
@@ -20,29 +27,40 @@ class SAM(torch.optim.Optimizer):
             for p in group["params"]:
                 if p.grad is None:
                     continue
+                self.state[p]["old_p"] = p.data.clone()
                 e_w = (
                     (torch.pow(p, 2) if group["adaptive"] else 1.0)
                     * p.grad
                     * scale.to(p)
                 )
                 p.add_(e_w)  # climb to the local maximum "w + e(w)"
-                self.state[p]["e_w"] = e_w
 
         if zero_grad:
             self.zero_grad()
 
+        return loss
+
     @torch.no_grad()
-    def second_step(self, zero_grad=False):
+    def second_step(self, closure=None, zero_grad=False):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                try:
+                    loss = closure()
+                except:
+                    pass
         for group in self.param_groups:
             for p in group["params"]:
                 if p.grad is None:
                     continue
-                p.sub_(self.state[p]["e_w"])  # get back to "w" from "w + e(w)"
+                p.data = self.state[p]["old_p"]  # get back to "w" from "w + e(w)"
 
         self.base_optimizer.step()  # do the actual "sharpness-aware" update
 
         if zero_grad:
             self.zero_grad()
+
+        return loss
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -75,3 +93,7 @@ class SAM(torch.optim.Optimizer):
             p=2,
         )
         return norm
+
+    def load_state_dict(self, state_dict):
+        super().load_state_dict(state_dict)
+        self.base_optimizer.param_groups = self.param_groups

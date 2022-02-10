@@ -1,0 +1,94 @@
+seed: 1031
+log_path: ./log/
+config_path: ./config/
+weight_path: ./weights/
+pred_path: ./preds/
+
+root: ./dataset/petfinder-adoption-prediction
+
+n_splits: &n_splits 5
+epoch: 20
+
+trainer:
+  gpus: 1
+  accumulate_grad_batches: 8
+  progress_bar_refresh_rate: 1
+  fast_dev_run: False
+  num_sanity_val_steps: 0
+  resume_from_checkpoint: null
+  precision: 16
+  move_metrics_to_cpu: True
+  auto_scale_batch_size: binsearch
+
+transform:
+  name: get_default_transforms
+  image_size: 224
+
+strong_transform:
+  name: mixup
+  params:
+    alpha: 0.5
+
+train_loader:
+  batch_size: 8
+  shuffle: True
+  num_workers: 8
+  pin_memory: True
+  drop_last: True
+
+val_loader:
+  batch_size: 16
+  shuffle: False
+  num_workers: 8
+  pin_memory: True
+  drop_last: False
+
+model:
+  name: swin_large_patch4_window7_224
+  output_dim: 1
+
+train_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+
+TTA: False
+
+optimizer:
+  name: optim.AdamW
+  params:
+    lr: 0.00001
+  
+scheduler:
+  name: optim.lr_scheduler.CosineAnnealingWarmRestarts
+  params:
+    T_0: 20
+    eta_min: 0.0001
+
+loss: nn.BCEWithLogitsLoss
+
+early_stopping:
+  patience: 4
+
+stochastic_weight_avg:
+  swa_epoch_start: 5
+  annealing_epochs: 3
+
+
+val:
+  name: stratified_group_kfold
+  params:
+    id: filepath
+    target: bins
+    group: PetID
+    n_splits: *n_splits
+    random_state: 1031
+    force_recreate: True
+
+sampling:
+#  name: random_over_sample
+  name: none
+  params:
+    random_state: 1031
